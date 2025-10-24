@@ -5,7 +5,23 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Github, Upload, Plus, X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Github, Upload, Plus, X, Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import Header from "@/components/Header";
@@ -13,6 +29,9 @@ import Footer from "@/components/Footer";
 
 const Projects = () => {
   const [showUploadForm, setShowUploadForm] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null);
+  const [editingProject, setEditingProject] = useState<any>(null);
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -95,6 +114,91 @@ const Projects = () => {
       return;
     }
     uploadMutation.mutate();
+  };
+
+  const deleteMutation = useMutation({
+    mutationFn: async (projectId: string) => {
+      const { error } = await supabase
+        .from("projects")
+        .delete()
+        .eq("id", projectId);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project deleted successfully!");
+      setDeleteProjectId(null);
+    },
+    onError: (error) => {
+      toast.error("Failed to delete project: " + error.message);
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      let imageUrl = editingProject.image_url;
+
+      if (imageFile) {
+        const fileExt = imageFile.name.split(".").pop();
+        const fileName = `${Math.random()}.${fileExt}`;
+        const { error: uploadError } = await supabase.storage
+          .from("project-images")
+          .upload(fileName, imageFile);
+
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from("project-images")
+          .getPublicUrl(fileName);
+
+        imageUrl = publicUrl;
+      }
+
+      const { error } = await supabase
+        .from("projects")
+        .update({
+          title: formData.title,
+          description: formData.description,
+          github_link: formData.github_link,
+          image_url: imageUrl,
+        })
+        .eq("id", editingProject.id);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project updated successfully!");
+      setShowEditDialog(false);
+      setEditingProject(null);
+      setFormData({ title: "", description: "", github_link: "" });
+      setImageFile(null);
+      setImagePreview("");
+    },
+    onError: (error) => {
+      toast.error("Failed to update project: " + error.message);
+    },
+  });
+
+  const handleEdit = (project: any) => {
+    setEditingProject(project);
+    setFormData({
+      title: project.title,
+      description: project.description || "",
+      github_link: project.github_link,
+    });
+    setImagePreview(project.image_url);
+    setShowEditDialog(true);
+  };
+
+  const handleUpdateSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.title || !formData.github_link) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+    updateMutation.mutate();
   };
 
   return (
@@ -230,15 +334,33 @@ const Projects = () => {
                         {project.description}
                       </p>
                     )}
-                    <a
-                      href={project.github_link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center text-primary hover:underline"
-                    >
-                      <Github className="mr-2 h-4 w-4" />
-                      View on GitHub
-                    </a>
+                    <div className="flex items-center justify-between">
+                      <a
+                        href={project.github_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center text-primary hover:underline"
+                      >
+                        <Github className="mr-2 h-4 w-4" />
+                        View on GitHub
+                      </a>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEdit(project)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteProjectId(project.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               ))}
@@ -254,6 +376,105 @@ const Projects = () => {
       </main>
 
       <Footer />
+
+      {/* Edit Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Project</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="edit-title">Project Title *</Label>
+              <Input
+                id="edit-title"
+                value={formData.title}
+                onChange={(e) =>
+                  setFormData({ ...formData, title: e.target.value })
+                }
+                placeholder="Enter project title"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-description">Description</Label>
+              <Textarea
+                id="edit-description"
+                value={formData.description}
+                onChange={(e) =>
+                  setFormData({ ...formData, description: e.target.value })
+                }
+                placeholder="Describe your project"
+                rows={3}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-github">GitHub Repository *</Label>
+              <Input
+                id="edit-github"
+                type="url"
+                value={formData.github_link}
+                onChange={(e) =>
+                  setFormData({ ...formData, github_link: e.target.value })
+                }
+                placeholder="https://github.com/username/repo"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-image">Project Image (optional)</Label>
+              <div className="flex items-center gap-4">
+                <Input
+                  id="edit-image"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                  className="flex-1"
+                />
+                <Upload className="h-5 w-5 text-muted-foreground" />
+              </div>
+              {imagePreview && (
+                <img
+                  src={imagePreview}
+                  alt="Preview"
+                  className="mt-4 rounded-lg max-h-48 object-cover"
+                />
+              )}
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={updateMutation.isPending}
+            >
+              {updateMutation.isPending ? "Updating..." : "Update Project"}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteProjectId} onOpenChange={() => setDeleteProjectId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the project.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteProjectId && deleteMutation.mutate(deleteProjectId)}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

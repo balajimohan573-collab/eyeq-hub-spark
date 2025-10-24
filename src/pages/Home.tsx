@@ -1,31 +1,99 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Link } from "react-router-dom";
-import { Calendar, Users, Code, ArrowRight } from "lucide-react";
+import { Calendar, Users, ArrowRight, Plus, X, Upload } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 
 const Home = () => {
-  const events = [
-    {
-      title: "Web Development Workshop",
-      date: "March 15, 2025",
-      description: "Learn modern web development with React and TypeScript",
-      icon: Code,
+  const [showEventForm, setShowEventForm] = useState(false);
+  const [eventFormData, setEventFormData] = useState({
+    title: "",
+    description: "",
+    event_date: "",
+  });
+  const [eventImageFile, setEventImageFile] = useState<File | null>(null);
+  const [eventImagePreview, setEventImagePreview] = useState<string>("");
+  const queryClient = useQueryClient();
+
+  const { data: events, isLoading: eventsLoading } = useQuery({
+    queryKey: ["events"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("events")
+        .select("*")
+        .order("event_date", { ascending: true });
+      
+      if (error) throw error;
+      return data;
     },
-    {
-      title: "Hackathon 2025",
-      date: "April 20-21, 2025",
-      description: "24-hour coding challenge to build innovative solutions",
-      icon: Calendar,
+  });
+
+  const uploadEventMutation = useMutation({
+    mutationFn: async () => {
+      if (!eventImageFile) throw new Error("No image selected");
+
+      const fileExt = eventImageFile.name.split(".").pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage
+        .from("project-images")
+        .upload(fileName, eventImageFile);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from("project-images")
+        .getPublicUrl(fileName);
+
+      const { error: insertError } = await supabase.from("events").insert({
+        title: eventFormData.title,
+        description: eventFormData.description,
+        event_date: eventFormData.event_date,
+        image_url: publicUrl,
+      });
+
+      if (insertError) throw insertError;
     },
-    {
-      title: "Tech Talk Series",
-      date: "Every Friday",
-      description: "Weekly sessions with industry experts and alumni",
-      icon: Users,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["events"] });
+      toast.success("Event uploaded successfully!");
+      setEventFormData({ title: "", description: "", event_date: "" });
+      setEventImageFile(null);
+      setEventImagePreview("");
+      setShowEventForm(false);
     },
-  ];
+    onError: (error) => {
+      toast.error("Failed to upload event: " + error.message);
+    },
+  });
+
+  const handleEventImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setEventImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setEventImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleEventSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!eventImageFile || !eventFormData.title || !eventFormData.event_date) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+    uploadEventMutation.mutate();
+  };
 
   const members = [
     { name: "Sarah Chen", role: "President", image: "https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah" },
@@ -94,23 +162,141 @@ const Home = () => {
               <p className="text-lg text-muted-foreground">
                 Join us for exciting events and learning opportunities
               </p>
+              <Button
+                onClick={() => setShowEventForm(!showEventForm)}
+                className="mt-4"
+                size="lg"
+              >
+                {showEventForm ? (
+                  <>
+                    <X className="mr-2 h-4 w-4" /> Cancel
+                  </>
+                ) : (
+                  <>
+                    <Plus className="mr-2 h-4 w-4" /> Add Event
+                  </>
+                )}
+              </Button>
             </div>
-            <div className="grid md:grid-cols-3 gap-6">
-              {events.map((event, index) => (
-                <Card key={index} className="group hover:shadow-lg hover:shadow-primary/10 transition-all duration-300">
-                  <CardContent className="p-6 space-y-4">
-                    <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-                      <event.icon className="h-6 w-6 text-primary" />
+
+            {showEventForm && (
+              <Card className="max-w-2xl mx-auto mb-12">
+                <CardContent className="p-6">
+                  <form onSubmit={handleEventSubmit} className="space-y-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="event-title">Event Title *</Label>
+                      <Input
+                        id="event-title"
+                        value={eventFormData.title}
+                        onChange={(e) =>
+                          setEventFormData({ ...eventFormData, title: e.target.value })
+                        }
+                        placeholder="Enter event title"
+                        required
+                      />
                     </div>
-                    <div>
-                      <h3 className="text-xl font-semibold mb-2">{event.title}</h3>
-                      <p className="text-sm text-primary mb-3">{event.date}</p>
-                      <p className="text-muted-foreground">{event.description}</p>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="event-description">Description</Label>
+                      <Textarea
+                        id="event-description"
+                        value={eventFormData.description}
+                        onChange={(e) =>
+                          setEventFormData({ ...eventFormData, description: e.target.value })
+                        }
+                        placeholder="Describe your event"
+                        rows={3}
+                      />
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="event-date">Event Date *</Label>
+                      <Input
+                        id="event-date"
+                        type="date"
+                        value={eventFormData.event_date}
+                        onChange={(e) =>
+                          setEventFormData({ ...eventFormData, event_date: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="event-image">Event Image *</Label>
+                      <div className="flex items-center gap-4">
+                        <Input
+                          id="event-image"
+                          type="file"
+                          accept="image/*"
+                          onChange={handleEventImageChange}
+                          className="flex-1"
+                          required
+                        />
+                        <Upload className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      {eventImagePreview && (
+                        <img
+                          src={eventImagePreview}
+                          alt="Preview"
+                          className="mt-4 rounded-lg max-h-48 object-cover"
+                        />
+                      )}
+                    </div>
+
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={uploadEventMutation.isPending}
+                    >
+                      {uploadEventMutation.isPending ? "Uploading..." : "Upload Event"}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+            )}
+
+            {eventsLoading ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">Loading events...</p>
+              </div>
+            ) : events && events.length > 0 ? (
+              <div className="grid md:grid-cols-3 gap-6">
+                {events.map((event) => (
+                  <Card key={event.id} className="group hover:shadow-lg hover:shadow-primary/10 transition-all duration-300">
+                    <div className="aspect-video overflow-hidden">
+                      <img
+                        src={event.image_url}
+                        alt={event.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                    </div>
+                    <CardContent className="p-6 space-y-3">
+                      <h3 className="text-xl font-semibold">{event.title}</h3>
+                      <p className="text-sm text-primary">
+                        <Calendar className="inline h-4 w-4 mr-1" />
+                        {new Date(event.event_date).toLocaleDateString('en-US', { 
+                          year: 'numeric', 
+                          month: 'long', 
+                          day: 'numeric' 
+                        })}
+                      </p>
+                      {event.description && (
+                        <p className="text-muted-foreground text-sm">
+                          {event.description}
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">
+                  No events yet. Add your first event!
+                </p>
+              </div>
+            )}
           </div>
         </section>
 
